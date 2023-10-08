@@ -6,62 +6,84 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import accuracy_score
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def train(train_set, model, optimizer, loss_fn):
     model.train()
-    corrects = 0
-    total_preds = 0
-    for img, label in tqdm(train_set):
-        img, label = img.to(device), label.to(device)
+    y_true = []
+    y_pred = []
+    for img, labels in tqdm(train_set):
+        img, labels = img.to(device), labels.to(device)
         preds = model(img)
 
         optimizer.zero_grad()
-        loss = loss_fn(preds, label)
+        loss = loss_fn(preds, labels)
         loss.backward()
         optimizer.step()
 
-        preds = torch.argmax(F.softmax(preds, dim=-1), dim=-1)
-        label = torch.argmax(label, dim=-1)
 
-        corrects += torch.sum(preds == label).item()
-        total_preds += preds.shape[0]
+        preds = torch.argmax(F.softmax(preds, dim=-1), dim=-1).tolist()
+        labels = torch.argmax(labels, dim=-1).tolist()
 
-    return corrects / total_preds
+        y_true += labels
+        y_pred += preds
+
+    return y_true, y_pred
 
 
 def test(test_set, model):
     model.eval()
-    corrects = 0
-    total_preds = 0
+    y_true = []
+    y_pred = []
+
     with torch.no_grad():
-        for img, label in tqdm(test_set):
-            img, label = img.to(device), label.to(device)
+        for img, labels in tqdm(test_set):
+            img, labels = img.to(device), labels.to(device)
             preds = model(img)
-            preds = torch.argmax(F.softmax(preds, dim=-1), dim=-1)
-            label = torch.argmax(label, dim=-1)
+            preds = torch.argmax(F.softmax(preds, dim=-1), dim=-1).tolist()
+            labels = torch.argmax(labels, dim=-1).tolist()
 
-            corrects += torch.sum(preds == label).item()
-            total_preds += preds.shape[0]
+            y_true += labels
+            y_pred += preds
 
-    return corrects / total_preds
+    return y_true, y_pred
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('--lr', default=1e-3, type=float) # it seems like 1e-2 is too large
-    parser.add_argument('-b', default=1024, type=int)
-    parser.add_argument('--epoch', '-e', default=100, type=int)
+    parser.add_argument('--lr', default=1e-4, type=float) # the model is learning-rate sensitive, use smaller learning rate 
+    parser.add_argument('--batch_size', '-b', default=2048, type=int)
+    parser.add_argument('--epoch', '-e', default=80, type=int)
+    parser.add_argument('--patch_size', '-p', default=8, type=int)
+    parser.add_argument('--embedded_dim', '-d', default=512, type=int)
+    parser.add_argument('--encoder_layer', '-l', default=8, type=int)
+    parser.add_argument('--num_class', '-c', default=10, type=int)
+    parser.add_argument('--num_head', '-nh', default=8, type=int)
+    parser.add_argument('--drop', default=0.1, type=float)
+    parser.add_argument('--dataset', '-ds', default='mnist', type=str, help='Currently support only MNIST(mnist) and CIFAR-10(cifar)')
 
     args = parser.parse_args()
     
-    train_set, test_set = dataset.get_dataset(args.b)
-    model = Vit(img_shape=(28, 28)).to(device)
+    train_set, test_set, img_shape = dataset.get_dataset(args.batch_size, args.dataset)
+    model = Vit(
+        img_shape=img_shape,
+        patch_size=args.patch_size,
+        embedded_dim=args.embedded_dim,
+        encoder_layers=args.encoder_layer,
+        num_class=args.num_class,
+        num_head=args.num_head,
+        drop=args.drop
+    ).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = nn.CrossEntropyLoss()
 
     for e in range(args.epoch):
-        train_acc = train(train_set, model, optimizer, loss_fn)
-        test_acc = test(test_set, model)
+        print(f'epoch: {e}')
 
-        print(f'train_acc: {train_acc:.4f}, test_acc: {test_acc:.4f}')
+        train_true, train_preds = train(train_set, model, optimizer, loss_fn)
+        test_true, test_preds = test(test_set, model)
+
+        print(f'train_acc: {accuracy_score(train_true, train_preds):.4f}, test_acc: {accuracy_score(test_true, test_preds):.4f}')
+
+            

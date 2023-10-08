@@ -19,10 +19,11 @@ class LinearProj(nn.Module):
 
 
 class PatchEmbedder(nn.Module):
-    def __init__(self, num_patches, embedded_dim):
+    def __init__(self, num_patches, embedded_dim, drop):
         super().__init__()
         self.cls_token = nn.Parameter(torch.rand(1, embedded_dim))
         self.pos_embedding = nn.Parameter(torch.rand(num_patches + 1, embedded_dim))
+        self.dropout = nn.Dropout(p=drop)
     
     def forward(self, x):
         batch_size = x.shape[0]
@@ -30,17 +31,21 @@ class PatchEmbedder(nn.Module):
         pos_emb = repeat(self.pos_embedding, 'n e -> b n e', b=batch_size)
 
         x = torch.cat([cls, x], dim=1)
-        x += self.pos_embedding
+        x += pos_emb
+
+        x = self.dropout(x)
 
         return x
 
 
 class TranformerEncoder(nn.Module):
-    def __init__(self, embedded_dim, hidden_dim):
+    def __init__(self, embedded_dim, hidden_dim, num_head, drop):
         super().__init__()
         self.net = nn.Sequential(
-            EncoderSublayer(MultiAtt(8, embedded_dim), embedded_dim),
-            EncoderSublayer(MLP(embedded_dim, hidden_dim), embedded_dim),
+            EncoderSublayer(MultiAtt(num_head, embedded_dim, drop), embedded_dim),
+            nn.Dropout(p=drop),
+            EncoderSublayer(MLP(embedded_dim, hidden_dim, drop), embedded_dim),
+            nn.Dropout(p=drop),
         )
 
     def forward(self, x):
@@ -61,13 +66,14 @@ class EncoderSublayer(nn.Module):
 
 
 class MultiAtt(nn.Module):
-    def __init__(self, heads, embedded_dim):
+    def __init__(self, heads, embedded_dim, drop):
         super().__init__()
         self.num_head = heads
         self.scaling = (embedded_dim // heads) ** (-0.5)
 
         self.pre_proj = nn.Linear(embedded_dim, embedded_dim * 3) # project the input into 3 * embedded_dim, and unpack them into q, k, v
         self.proj = nn.Linear(embedded_dim, embedded_dim)
+        self.dropout = nn.Dropout(p=drop)
         
 
     def forward(self, x):
@@ -76,6 +82,7 @@ class MultiAtt(nn.Module):
 
         similarity = torch.einsum('bhqi, bhki -> bhqk', q, k)
         similarity = F.softmax(similarity, dim=-1) * self.scaling
+        similarity = self.dropout(similarity)
 
         att_score = torch.einsum('bhnk, bhke -> bhne', similarity, v)
         att_score = rearrange(att_score, 'b h n e -> b n (h e)')
@@ -86,11 +93,12 @@ class MultiAtt(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, embedded_dim, hidden_dim):
+    def __init__(self, embedded_dim, hidden_dim, drop):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(embedded_dim, hidden_dim),
             nn.GELU(),
+            nn.Dropout(p=drop),
             nn.Linear(hidden_dim, embedded_dim)
         )
 
@@ -99,11 +107,12 @@ class MLP(nn.Module):
 
 
 class Classifier(nn.Module):
-    def __init__(self, embedded_dim, num_class):
+    def __init__(self, embedded_dim, num_class, drop):
         super().__init__()
         self.net = nn.Sequential(
             Reduce('b n e -> b e', reduction='mean'),
             nn.LayerNorm(embedded_dim),
+            nn.Dropout(p=drop),
             nn.Linear(embedded_dim, num_class)
         )
 
@@ -112,17 +121,17 @@ class Classifier(nn.Module):
 
 
 class Vit(nn.Module):
-    def __init__(self, img_shape, patch_size=7, in_channels=1, embedded_dim=128, encoder_layers=4, num_class=10):
+    def __init__(self, img_shape, patch_size, embedded_dim, encoder_layers, num_class, num_head, drop):
         super().__init__()
-        self.img_h, self.img_w = img_shape
-        self.num_patch = int((self.img_h // patch_size) * (self.img_w // patch_size))
-        encoder_layers = [TranformerEncoder(embedded_dim, embedded_dim*4) for _ in range(encoder_layers)]
+        c, h, w = img_shape
+        self.num_patch = int((c // patch_size) * (w // patch_size))
+        encoder_layers = [TranformerEncoder(embedded_dim, embedded_dim*4, num_head, drop) for _ in range(encoder_layers)]
 
         self.net = nn.ModuleList([
-            LinearProj(patch_size, in_channels, embedded_dim),
-            PatchEmbedder(self.num_patch, embedded_dim),
+            LinearProj(patch_size, c, embedded_dim),
+            PatchEmbedder(self.num_patch, embedded_dim, drop),
             *encoder_layers,
-            Classifier(embedded_dim, num_class)
+            Classifier(embedded_dim, num_class, drop)
         ])
 
 
