@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from tqdm import tqdm
 import dataset
-from Vit import Vit
+from ViT import ViT
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -9,6 +9,8 @@ import torch.nn.functional as F
 from sklearn.metrics import accuracy_score
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+print(f'using device {device}')
 
 def train(train_set, model, optimizer, loss_fn):
     model.train()
@@ -55,18 +57,19 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=1e-4, type=float) # the model is learning-rate sensitive, use smaller learning rate 
     parser.add_argument('--batch_size', '-b', default=2048, type=int)
     parser.add_argument('--epoch', '-e', default=80, type=int)
-    parser.add_argument('--patch_size', '-p', default=8, type=int)
-    parser.add_argument('--embedded_dim', '-d', default=512, type=int)
+    parser.add_argument('--patch_size', '-p', default=7, type=int)
+    parser.add_argument('--embedded_dim', '-d', default=768, type=int)
     parser.add_argument('--encoder_layer', '-l', default=8, type=int)
     parser.add_argument('--num_class', '-c', default=10, type=int)
     parser.add_argument('--num_head', '-nh', default=8, type=int)
     parser.add_argument('--drop', default=0.1, type=float)
     parser.add_argument('--dataset', '-ds', default='mnist', type=str, help='Currently support only MNIST(mnist) and CIFAR-10(cifar)')
+    parser.add_argument('--weight_decay', '--wd', default=1e-5, type=float)
 
     args = parser.parse_args()
     
     train_set, test_set, img_shape = dataset.get_dataset(args.batch_size, args.dataset)
-    model = Vit(
+    model = ViT(
         img_shape=img_shape,
         patch_size=args.patch_size,
         embedded_dim=args.embedded_dim,
@@ -75,7 +78,7 @@ if __name__ == '__main__':
         num_head=args.num_head,
         drop=args.drop
     ).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     loss_fn = nn.CrossEntropyLoss()
 
     for e in range(args.epoch):

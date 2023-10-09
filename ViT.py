@@ -31,7 +31,7 @@ class PatchEmbedder(nn.Module):
         pos_emb = repeat(self.pos_embedding, 'n e -> b n e', b=batch_size)
 
         x = torch.cat([cls, x], dim=1)
-        x += pos_emb
+        x = x + pos_emb
 
         x = self.dropout(x)
 
@@ -80,8 +80,8 @@ class MultiAtt(nn.Module):
         x = rearrange(self.pre_proj(x), 'b n (u h e) -> u b h n e', u=3, h=self.num_head)
         q, k, v = x[0], x[1], x[2]
 
-        similarity = torch.einsum('bhqi, bhki -> bhqk', q, k)
-        similarity = F.softmax(similarity, dim=-1) * self.scaling
+        similarity = torch.einsum('bhqi, bhki -> bhqk', q, k) * self.scaling
+        similarity = F.softmax(similarity, dim=-1) 
         similarity = self.dropout(similarity)
 
         att_score = torch.einsum('bhnk, bhke -> bhne', similarity, v)
@@ -110,7 +110,6 @@ class Classifier(nn.Module):
     def __init__(self, embedded_dim, num_class, drop):
         super().__init__()
         self.net = nn.Sequential(
-            Reduce('b n e -> b e', reduction='mean'),
             nn.LayerNorm(embedded_dim),
             nn.Dropout(p=drop),
             nn.Linear(embedded_dim, num_class)
@@ -120,7 +119,7 @@ class Classifier(nn.Module):
         return self.net(x)
 
 
-class Vit(nn.Module):
+class ViT(nn.Module):
     def __init__(self, img_shape, patch_size, embedded_dim, encoder_layers, num_class, num_head, drop):
         super().__init__()
         c, h, w = img_shape
@@ -131,12 +130,15 @@ class Vit(nn.Module):
             LinearProj(patch_size, c, embedded_dim),
             PatchEmbedder(self.num_patch, embedded_dim, drop),
             *encoder_layers,
-            Classifier(embedded_dim, num_class, drop)
         ])
+        self.output_layer = Classifier(embedded_dim, num_class, drop)
 
 
     def forward(self, x):
         for layer in self.net:
             x = layer(x)
+        
+        cls_token = x[:, 0]
+        output = self.output_layer(cls_token)
 
-        return x
+        return output
