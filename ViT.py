@@ -33,7 +33,6 @@ class PatchEmbedder(nn.Module):
         x = torch.cat([cls, x], dim=1)
         x = x + pos_emb
 
-        x = self.dropout(x)
 
         return x
 
@@ -82,10 +81,11 @@ class MultiAtt(nn.Module):
 
         similarity = torch.einsum('bhqi, bhki -> bhqk', q, k) * self.scaling
         similarity = F.softmax(similarity, dim=-1) 
-        similarity = self.dropout(similarity)
 
         att_score = torch.einsum('bhnk, bhke -> bhne', similarity, v)
         att_score = rearrange(att_score, 'b h n e -> b n (h e)')
+
+        att_score = self.dropout(att_score)
         att_score = self.proj(att_score)
 
         return att_score
@@ -123,7 +123,7 @@ class ViT(nn.Module):
     def __init__(self, img_shape, patch_size, embedded_dim, encoder_layers, num_class, num_head, drop):
         super().__init__()
         c, h, w = img_shape
-        self.num_patch = int((c // patch_size) * (w // patch_size))
+        self.num_patch = int((h // patch_size) * (w // patch_size))
         encoder_layers = [TranformerEncoder(embedded_dim, embedded_dim*4, num_head, drop) for _ in range(encoder_layers)]
 
         self.net = nn.ModuleList([
@@ -137,6 +137,7 @@ class ViT(nn.Module):
     def forward(self, x):
         for layer in self.net:
             x = layer(x)
+            # print(x.shape)
         
         cls_token = x[:, 0]
         output = self.output_layer(cls_token)
